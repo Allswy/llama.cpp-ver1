@@ -1895,6 +1895,16 @@ enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor) {
 
 enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
     GGML_ASSERT(tensor);
+    //拦截模型权重，不再进行检查
+    if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
+
+        // 保证指针非空
+        if (tensor->data == NULL) {
+            tensor->data = (void*)1;
+        }
+
+        return GGML_STATUS_SUCCESS;
+    }
     GGML_ASSERT(tensor->buffer == NULL);
     GGML_ASSERT(tensor->data == NULL);
     GGML_ASSERT(tensor->view_src == NULL);

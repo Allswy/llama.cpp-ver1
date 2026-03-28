@@ -4,6 +4,7 @@
 #include "ggml.h"
 #include "gguf.h"
 #include "llama-hparams.h"
+#include "custom_layer_bridge.h"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +13,47 @@
 #include <cstring>
 #include <future>
 #include <regex>
+
+void init_layer_buffer() {
+    if (g_layer_buffer != nullptr) {
+        return;
+    }
+    size_t max_layer_bytes = 0;
+
+    for (int i = 0; i < MAX_LAYERS; i++) {
+        //fprintf(stderr, "Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
+        printf("Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
+        if (g_my_layer_table[i].total_bytes_needed > max_layer_bytes) {
+            max_layer_bytes = g_my_layer_table[i].total_bytes_needed;
+        }
+    }
+
+    g_layer_buffer_size = (size_t)(max_layer_bytes * 1.05);
+
+    g_layer_buffer = malloc(g_layer_buffer_size);
+    if (!g_layer_buffer) {
+        fprintf(stderr, "Fatal Error: Failed to pre-allocate static layer buffer of size %zu!\n", g_layer_buffer_size);
+        exit(1);
+    }
+
+    fprintf(stderr, "Success: Allocated %zu bytes for Static Layer Buffer.\n", g_layer_buffer_size);
+}
+
+void init_layer_table() {
+    static bool already_cleared = false;
+    if (already_cleared) return;//避免重入
+    memset(g_my_layer_table, 0, sizeof(g_my_layer_table));
+
+    for (int i = 0; i < MAX_LAYERS; i++) {
+        g_my_layer_table[i].layer_id = -2;
+        g_my_layer_table[i].is_initialized = false;
+        g_my_layer_table[i].tensor_count = 0;
+        g_my_layer_table[i].total_bytes_needed = 0;
+
+    }
+    already_cleared = true;
+}
+
 
 static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;
@@ -524,6 +566,10 @@ llama_model_loader::llama_model_loader(
         trace = atoi(getenv("LLAMA_TRACE"));
     }
 
+    // 初始化layertable并且持久化文件指针
+    init_layer_table();
+    g_model_file = fopen(fname.c_str(), "rb");
+
     if (param_overrides_p != nullptr) {
         for (const struct llama_model_kv_override * p = param_overrides_p; p->key[0] != 0; p++) {
             kv_overrides.insert({std::string(p->key), *p});
@@ -578,6 +624,47 @@ llama_model_loader::llama_model_loader(
             n_elements += ggml_nelements(cur);
             n_bytes    += ggml_nbytes(cur);
             weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), 0, metadata, cur));
+
+            //初始化模型元数据的同时进行绝对偏移量计算
+            int layer_id = 900;
+            if (tensor_name.rfind("blk.", 0) == 0) layer_id = std::atoi(tensor_name.c_str() + 4);
+            else if (tensor_name == "token_embd.weight") layer_id = 998;
+            else if (tensor_name == "output.weight") layer_id = 999;
+            else if (tensor_name == "output_norm.weight") layer_id = 1000;
+            // 整个 GGUF 文件数据区的起始绝对位置
+            size_t data_start_offset = gguf_get_data_offset(metadata);
+
+            // 通过张量名字，在 metadata 里查到它的索引编号
+            int tensor_idx = gguf_find_tensor(metadata, tensor_name.c_str());
+
+            if (tensor_idx >= 0) {
+                size_t relative_offset = gguf_get_tensor_offset(metadata, tensor_idx);
+                size_t absolute_file_offset = data_start_offset + relative_offset;
+
+                LayerDiskInfo & info = g_my_layer_table[layer_id];
+
+                if (info.tensor_count < MAX_TENSORS_PER_LAYER) {
+                    // 填充单个 TensorLocation
+                    TensorLocation & loc = info.tensors[info.tensor_count];
+                    //loc.tensor = cur;
+                    strcpy(loc.name, cur->name);
+                    loc.absolute_file_offset = absolute_file_offset;
+                    loc.n_bytes = ggml_nbytes(cur);
+
+                    // 更新该层的统计数据
+                    info.total_bytes_needed += loc.n_bytes;
+                    info.tensor_count++;
+                    info.is_initialized = true;
+                    info.layer_id = layer_id;
+                    cur->data = (void*) 1;
+                } else {
+                    fprintf(stderr, "Error: Too many tensors in layer %d\n", layer_id);
+                }
+            } else {
+                fprintf(stderr, "Warning: Tensor %s not found in metadata!\n", tensor_name.c_str());
+            }
+            //printf("size of tensor %s: %zu bytes\n", tensor_name.c_str(), ggml_nbytes(cur));
+            g_my_layer_table[layer_id].total_bytes_needed += ggml_nbytes(cur);
         }
         uint16_t n_split = 0;
         get_key(llm_kv(LLM_KV_SPLIT_COUNT), n_split, false);
@@ -644,6 +731,48 @@ llama_model_loader::llama_model_loader(
                     n_elements += ggml_nelements(cur);
                     n_bytes    += ggml_nbytes(cur);
                     weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), idx, ctx_gguf.get(), cur));
+
+                    //初始化模型元数据的同时进行绝对偏移量计算
+                    int layer_id = 900;
+                    if (tensor_name.rfind("blk.", 0) == 0) layer_id = std::atoi(tensor_name.c_str() + 4);
+                    else if (tensor_name == "token_embd.weight") layer_id = 998;
+                    else if (tensor_name == "output.weight") layer_id = 999;
+                    else if (tensor_name == "output_norm.weight") layer_id = 1000;
+                    // 整个 GGUF 文件数据区的起始绝对位置
+                    size_t data_start_offset = gguf_get_data_offset(metadata);
+
+                    // 通过张量名字，在 metadata 里查到它的索引编号
+                    int tensor_idx = gguf_find_tensor(metadata, tensor_name.c_str());
+
+                    if (tensor_idx >= 0) {
+                        size_t relative_offset = gguf_get_tensor_offset(metadata, tensor_idx);
+                        size_t absolute_file_offset = data_start_offset + relative_offset;
+
+                        LayerDiskInfo & info = g_my_layer_table[layer_id];
+
+                        if (info.tensor_count < MAX_TENSORS_PER_LAYER) {
+                            // 填充单个 TensorLocation
+                            TensorLocation & loc = info.tensors[info.tensor_count];
+                            //loc.tensor = cur;
+                            strcpy(loc.name, cur->name);
+                            loc.absolute_file_offset = absolute_file_offset;
+                            loc.n_bytes = ggml_nbytes(cur);
+
+                            // 更新该层的统计数据
+                            info.total_bytes_needed += loc.n_bytes;
+                            info.tensor_count++;
+                            info.is_initialized = true;
+                            info.layer_id = layer_id;
+                            cur->data = (void*) 1;
+                        } else {
+                            fprintf(stderr, "Error: Too many tensors in layer %d\n", layer_id);
+                        }
+                    } else {
+                        fprintf(stderr, "Warning: Tensor %s not found in metadata!\n", tensor_name.c_str());
+                    }
+                    //printf("size of tensor %s: %zu bytes\n", tensor_name.c_str(), ggml_nbytes(cur));
+                    g_my_layer_table[layer_id].total_bytes_needed += ggml_nbytes(cur);
+
                 }
             }
 
@@ -688,6 +817,46 @@ llama_model_loader::llama_model_loader(
             n_elements += ggml_nelements(cur);
             n_bytes    += ggml_nbytes(cur);
             weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), 0, metadata, cur));
+            //初始化模型元数据的同时进行绝对偏移量计算
+            int layer_id = 900;
+            if (tensor_name.rfind("blk.", 0) == 0) layer_id = std::atoi(tensor_name.c_str() + 4);
+            else if (tensor_name == "token_embd.weight") layer_id = 998;
+            else if (tensor_name == "output.weight") layer_id = 999;
+            else if (tensor_name == "output_norm.weight") layer_id = 1000;
+            // 整个 GGUF 文件数据区的起始绝对位置
+            size_t data_start_offset = gguf_get_data_offset(metadata);
+
+            // 通过张量名字，在 metadata 里查到它的索引编号
+            int tensor_idx = gguf_find_tensor(metadata, tensor_name.c_str());
+
+            if (tensor_idx >= 0) {
+                size_t relative_offset = gguf_get_tensor_offset(metadata, tensor_idx);
+                size_t absolute_file_offset = data_start_offset + relative_offset;
+
+                LayerDiskInfo & info = g_my_layer_table[layer_id];
+
+                if (info.tensor_count < MAX_TENSORS_PER_LAYER) {
+                    // 填充单个 TensorLocation
+                    TensorLocation & loc = info.tensors[info.tensor_count];
+                    //loc.tensor = cur;
+                    strcpy(loc.name, cur->name);
+                    loc.absolute_file_offset = absolute_file_offset;
+                    loc.n_bytes = ggml_nbytes(cur);
+
+                    // 更新该层的统计数据
+                    info.total_bytes_needed += loc.n_bytes;
+                    info.tensor_count++;
+                    info.is_initialized = true;
+                    info.layer_id = layer_id;
+                    cur->data = (void*) 1;
+                } else {
+                    fprintf(stderr, "Error: Too many tensors in layer %d\n", layer_id);
+                }
+            } else {
+                fprintf(stderr, "Warning: Tensor %s not found in metadata!\n", tensor_name.c_str());
+            }
+            //printf("size of tensor %s: %zu bytes\n", tensor_name.c_str(), ggml_nbytes(cur));
+            g_my_layer_table[layer_id].total_bytes_needed += ggml_nbytes(cur);
         }
     } else {
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
@@ -809,10 +978,17 @@ llama_model_loader::llama_model_loader(
         use_mmap = false;
     }
 
+    //覆写两个参数
+    use_mmap = false;
+    no_alloc = true;
+
     this->use_mmap = use_mmap;
     this->use_direct_io = use_direct_io;
     this->check_tensors = check_tensors;
     this->no_alloc = no_alloc;
+
+    //初始化buffer
+    init_layer_buffer();
 }
 
 std::string llama_model_loader::get_arch_name() const {

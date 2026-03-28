@@ -14,6 +14,7 @@
 #include "ops.h"
 #include "ggml.h"
 #include "common.h"
+#include "custom_layer_bridge.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h> // using malloc.h with MSC/MINGW
@@ -34,6 +35,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <signal.h>
+#include <stdlib.h>
 #if defined(__gnu_linux__)
 #include <syscall.h>
 #endif
@@ -49,6 +51,73 @@
 #ifdef GGML_USE_LLAMAFILE
 #include "llamafile/sgemm.h"
 #endif
+
+struct LayerDiskInfo g_my_layer_table[MAX_LAYERS];
+void* g_layer_buffer = NULL;             // 指向Buffer头部
+size_t g_layer_buffer_size = 0;              // Buffer 的容量
+FILE* g_model_file = NULL;               // 模型文件
+int g_current_loaded_layer = -999;        // 标记当前内存里是哪一层
+
+
+
+
+// 按需读取文件到Buffer
+void load_layer_from_disk(int target_layer) {
+    //printf("Loading layer %d from disk...\n", target_layer);
+    if (target_layer < 0 || target_layer >= MAX_LAYERS) return;
+    if (!g_my_layer_table[target_layer].is_initialized) return;
+
+    struct LayerDiskInfo * info = &g_my_layer_table[target_layer];
+
+    size_t current_buffer_offset = 0;
+
+    #if !defined(_WIN32)
+    int fd = fileno(g_model_file);
+    #endif
+    if (g_model_file == NULL) {
+        printf("nullptr\n");
+        //g_model_file = fopen(fname.c_str(), "rb");
+    }
+    //printf("tensor_count = %d, total_bytes_needed = %" PRIu64 " bytes\n", info->tensor_count, info->total_bytes_needed);
+
+    for (int i = 0; i < info->tensor_count; i++) {
+        struct TensorLocation * loc = &info->tensors[i];
+
+        current_buffer_offset = (current_buffer_offset + 31) & ~31;
+
+        if (current_buffer_offset + loc->n_bytes > g_layer_buffer_size) {
+            fprintf(stderr, "Fatal: Layer Buffer Overflow at layer %d, tensor %d!\n", target_layer, i);
+            exit(1);
+        }
+
+        void* target_memory_addr = (char*)g_layer_buffer + current_buffer_offset;
+        #if defined(_WIN32)
+            _fseeki64(g_model_file, loc->absolute_file_offset, SEEK_SET);
+            fread(target_memory_addr, 1, loc->n_bytes, g_model_file);
+        #else
+            pread(fd, target_memory_addr, loc->n_bytes, loc->absolute_file_offset);
+        #endif
+
+
+        //loc->tensor->data = target_memory_addr;
+        loc->cached_pool_addr = target_memory_addr;
+        current_buffer_offset += loc->n_bytes;
+    }
+
+    g_current_loaded_layer = target_layer;
+    //printf("Layer %d loaded into memory. Total bytes: %zu\n", target_layer, current_buffer_offset);
+}
+
+
+void* get_tensor_memory_by_name(int target_layer, const char* tensor_name) {
+    struct LayerDiskInfo * info = &g_my_layer_table[target_layer];
+    for (int i = 0; i < info->tensor_count; i++) {
+        if (strcmp(info->tensors[i].name, tensor_name) == 0) {
+            return info->tensors[i].cached_pool_addr;
+        }
+    }
+    return NULL;
+}
 
 // Note: once we move threading into a separate C++ file
 // will use std::hardware_destructive_interference_size instead of hardcoding it here
@@ -2984,6 +3053,54 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
             continue;
         }
+
+        int target_layer = -999;
+        //先弄清楚当前需要的是哪一层
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            if (node->src[i] != NULL && node->src[i]->name[0] != '\0') {
+                const char* t_name = node->src[i]->name;
+
+                if (strncmp(t_name, "blk.", 4) == 0) {
+                    target_layer = atoi(t_name + 4);
+                    break;
+                } else if (strcmp(t_name, "token_embd.weight") == 0) {
+                    target_layer = 998;
+                    break;
+                } else if (strcmp(t_name, "output.weight") == 0) {
+                    target_layer = 999;
+                    break;
+                }
+                else if (strcmp(t_name, "output_norm.weight") == 0) {
+                    target_layer = 1000;
+                    break;
+                }
+            }
+        }
+
+        // 单线程存取
+        if (state->ith == 0) {
+            extern int g_current_loaded_layer;
+
+            if (target_layer != -999 && target_layer != g_current_loaded_layer) {
+                load_layer_from_disk(target_layer);
+                g_current_loaded_layer = target_layer;
+            }
+
+            if (target_layer != -999) {
+                for (int i = 0; i < GGML_MAX_SRC; i++) {
+                    if (node->src[i] != NULL && node->src[i]->name[0] != '\0') {
+                        //获取load后，在Buffer里的地址
+                        void* real_addr = get_tensor_memory_by_name(target_layer, node->src[i]->name);
+                        if (real_addr != NULL) {
+                            node->src[i]->data = real_addr;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 等同步
+        ggml_barrier(state->threadpool);
 
         ggml_compute_forward(&params, node);
 
