@@ -629,7 +629,7 @@ int main(int argc, char ** argv) {
         if (params.show_timings) {
             console::set_display(DISPLAY_TYPE_INFO);
             console::log("\n");
-            console::log("[ Prompt: %.1f t/s | Generation: %.1f t/s ]\n", timings.prompt_per_second, timings.predicted_per_second);
+            console::log("[ Prompt: %.4f t/s | Generation: %.4f t/s ]\n", timings.prompt_per_second, timings.predicted_per_second);
             console::set_display(DISPLAY_TYPE_RESET);
         }
 
