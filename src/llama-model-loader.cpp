@@ -28,7 +28,8 @@ void init_layer_buffer() {
             max_layer_bytes = g_my_layer_table[i].total_bytes_needed;
         }
     }
-    printf("max_layer_bytes = %d", max_layer_bytes);
+    max_layer_bytes = 661225472;
+    //printf("max_layer_bytes = %d", max_layer_bytes);
 
     // g_layer_buffer_size = (size_t)(max_layer_bytes * 1.05);
 
