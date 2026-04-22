@@ -23,7 +23,7 @@ void init_layer_buffer() {
 
     for (int i = 0; i < MAX_LAYERS; i++) {
         //fprintf(stderr, "Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
-        //printf("Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
+        printf("Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
         if (g_my_layer_table[i].total_bytes_needed > max_layer_bytes) {
             max_layer_bytes = g_my_layer_table[i].total_bytes_needed;
         }
@@ -818,6 +818,9 @@ llama_model_loader::llama_model_loader(
         if (metadata == nullptr) {
             throw std::runtime_error(format("%s: failed to load model from file pointer", __func__));
         }
+
+
+
 
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
