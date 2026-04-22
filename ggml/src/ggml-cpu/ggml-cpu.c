@@ -71,6 +71,11 @@ void load_layer_from_disk(int target_layer) {
 
     size_t current_buffer_offset = 0;
 
+    if (g_model_file == NULL) {
+        fprintf(stderr, "Error: g_model_file is nullptr\n");
+        return; 
+    }
+
     #if !defined(_WIN32)
     int fd = fileno(g_model_file);
     #endif
@@ -80,10 +85,20 @@ void load_layer_from_disk(int target_layer) {
     }
     //printf("tensor_count = %d, total_bytes_needed = %" PRIu64 " bytes\n", info->tensor_count, info->total_bytes_needed);
 
+
+
+    // 检查基地址是否已经按 256 字节对齐
+    if ((uintptr_t)g_layer_buffer % GGML_MEM_ALIGN != 0) {
+        fprintf(stderr, "Fatal: g_layer_buffer base address is not aligned to %d bytes!\n", GGML_MEM_ALIGN);
+        // 如果这里报错，去修改 g_layer_buffer 的 malloc 代码
+        exit(1); 
+    }
+
+    
     for (int i = 0; i < info->tensor_count; i++) {
         struct TensorLocation * loc = &info->tensors[i];
 
-        current_buffer_offset = (current_buffer_offset + 31) & ~31;
+        current_buffer_offset = (current_buffer_offset + 255) & ~255;
 
         if (current_buffer_offset + loc->n_bytes > g_layer_buffer_size) {
             fprintf(stderr, "Fatal: Layer Buffer Overflow at layer %d, tensor %d!\n", target_layer, i);

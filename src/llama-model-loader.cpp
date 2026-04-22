@@ -13,6 +13,7 @@
 #include <cstring>
 #include <future>
 #include <regex>
+#include <cstdlib>
 
 void init_layer_buffer() {
     if (g_layer_buffer != nullptr) {
@@ -28,9 +29,26 @@ void init_layer_buffer() {
         }
     }
 
-    g_layer_buffer_size = (size_t)(max_layer_bytes * 1.05);
+    // g_layer_buffer_size = (size_t)(max_layer_bytes * 1.05);
 
-    g_layer_buffer = malloc(g_layer_buffer_size);
+    // g_layer_buffer = malloc(g_layer_buffer_size);
+
+    // --- 修改部分开始 ---
+    // 强制按 256 字节对齐分配内存 (GGML/CUDA 的首选对齐大小)
+    size_t alignment = 256; 
+    
+    // posix_memalign 要求传入一个 void* 指针的地址
+    void* aligned_ptr = nullptr;
+    int ret = posix_memalign(&aligned_ptr, alignment, g_layer_buffer_size);
+    
+    if (ret != 0 || aligned_ptr == nullptr) {
+        fprintf(stderr, "Fatal Error: Failed to pre-allocate %zu bytes aligned to %zu!\n", g_layer_buffer_size, alignment);
+        exit(1);
+    }
+    g_layer_buffer = aligned_ptr;
+    // --- 修改部分结束 ---
+
+
     if (!g_layer_buffer) {
         fprintf(stderr, "Fatal Error: Failed to pre-allocate static layer buffer of size %zu!\n", g_layer_buffer_size);
         exit(1);
