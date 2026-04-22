@@ -14,6 +14,7 @@
 #include <future>
 #include <regex>
 #include <cstdlib>
+#include <cuda_runtime.h>
 
 void init_layer_buffer() {
     if (g_layer_buffer != nullptr) {
@@ -35,19 +36,14 @@ void init_layer_buffer() {
 
     // g_layer_buffer = malloc(g_layer_buffer_size);
 
-    // --- 修改部分开始 ---
-    // 强制按 256 字节对齐分配内存 (GGML/CUDA 的首选对齐大小)
-    size_t alignment = 256; 
+    // --- 修改部分开始：使用 CUDA Unified Memory ---
+    cudaError_t err = cudaMallocManaged(&g_layer_buffer, g_layer_buffer_size);
     
-    // posix_memalign 要求传入一个 void* 指针的地址
-    void* aligned_ptr = nullptr;
-    int ret = posix_memalign(&aligned_ptr, alignment, g_layer_buffer_size);
-    
-    if (ret != 0 || aligned_ptr == nullptr) {
-        fprintf(stderr, "Fatal Error: Failed to pre-allocate %zu bytes aligned to %zu!\n", g_layer_buffer_size, alignment);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Fatal Error: cudaMallocManaged failed to allocate %zu bytes! Error: %s\n", 
+                g_layer_buffer_size, cudaGetErrorString(err));
         exit(1);
     }
-    g_layer_buffer = aligned_ptr;
     // --- 修改部分结束 ---
 
 
