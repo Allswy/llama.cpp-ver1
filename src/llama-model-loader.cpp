@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 
+
 void init_layer_buffer() {
     if (g_layer_buffer != nullptr) {
         return;
@@ -46,6 +47,7 @@ void init_layer_buffer() {
     }
     // --- 修改部分结束 ---
 
+    //g_my_managed_buffer = ggml_backend_cpu_buffer_from_ptr(g_layer_buffer, g_layer_buffer_size);
 
     if (!g_layer_buffer) {
         fprintf(stderr, "Fatal Error: Failed to pre-allocate static layer buffer of size %zu!\n", g_layer_buffer_size);

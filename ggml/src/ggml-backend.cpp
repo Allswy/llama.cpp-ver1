@@ -1927,23 +1927,39 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
 
     GGML_ASSERT(tensor);
     
-    // 拦截模型权重
-    if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
+    // // 拦截模型权重
+    // if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
 
-        // 绝不要用 (void*)1，给它一个绝对安全的起始地址！
+    //     // 绝不要用 (void*)1，给它一个绝对安全的起始地址！
+    //     if (tensor->data == NULL) {
+    //         // 直接指向你的 unified memory 基地址，反正你在 load_layer_from_disk 时会真正覆盖它
+    //         tensor->data = g_layer_buffer; 
+    //     }
+
+    //     // 【关键修复】：把它绑定到你刚才创建的合法 Buffer 上！不要让它变成孤儿！
+    //     tensor->buffer = g_my_managed_buffer;
+        
+    //     // 注册它，让后端知道它的存在
+    //     return ggml_backend_buffer_init_tensor(g_my_managed_buffer, tensor);
+    // }
+
+    // //
+
+    // 【关键修复 1】：删掉 "blk."，只拦截真正的模型权重！
+    // 增加 ".bias" 以防漏掉偏置项
+    if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, ".bias") != NULL)) {
+
+        // 【关键修复 2】：如果加载阶段 g_layer_buffer 还没就绪，给个安全的占位符对齐地址
         if (tensor->data == NULL) {
-            // 直接指向你的 unified memory 基地址，反正你在 load_layer_from_disk 时会真正覆盖它
-            tensor->data = g_layer_buffer; 
+            tensor->data = (g_layer_buffer != NULL) ? g_layer_buffer : (void*)256; 
         }
 
-        // 【关键修复】：把它绑定到你刚才创建的合法 Buffer 上！不要让它变成孤儿！
-        tensor->buffer = g_my_managed_buffer;
+        // 【关键修复 3】：绝不使用我们自定义的 buffer，直接沿用系统传进来的合法 buffer！
+        tensor->buffer = buffer;
         
-        // 注册它，让后端知道它的存在
-        return ggml_backend_buffer_init_tensor(g_my_managed_buffer, tensor);
+        // 让后端用合法的 buffer 注册这个 tensor
+        return ggml_backend_buffer_init_tensor(buffer, tensor);
     }
-
-    //
 
 
     GGML_ASSERT(tensor->buffer == NULL);
