@@ -12,6 +12,9 @@
 #include "ggml-backend-impl.h"
 #include "ggml-alloc.h"
 #include "ggml-impl.h"
+#include "custom_layer_bridge.h"
+
+
 
 #include <assert.h>
 #include <limits.h>
@@ -26,6 +29,8 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #endif
+
+g_my_managed_buffer = nullptr;
 
 
 // backend buffer type
@@ -1893,18 +1898,48 @@ enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor) {
     return ggml_backend_buffer_init_tensor(tensor->buffer, tensor);
 }
 
+
+
+
+
 enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    // GGML_ASSERT(tensor);
+    // //拦截模型权重，不再进行检查
+    // if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
+
+    //     // 保证指针非空
+    //     if (tensor->data == NULL) {
+    //         tensor->data = (void*)1;
+    //     }
+
+    //     return GGML_STATUS_SUCCESS;
+    // }
+
+
+
+    //
+
     GGML_ASSERT(tensor);
-    //拦截模型权重，不再进行检查
+    
+    // 拦截模型权重
     if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
 
-        // 保证指针非空
+        // 绝不要用 (void*)1，给它一个绝对安全的起始地址！
         if (tensor->data == NULL) {
-            tensor->data = (void*)1;
+            // 直接指向你的 unified memory 基地址，反正你在 load_layer_from_disk 时会真正覆盖它
+            tensor->data = g_layer_buffer; 
         }
 
-        return GGML_STATUS_SUCCESS;
+        // 【关键修复】：把它绑定到你刚才创建的合法 Buffer 上！不要让它变成孤儿！
+        tensor->buffer = g_my_managed_buffer;
+        
+        // 注册它，让后端知道它的存在
+        return ggml_backend_buffer_init_tensor(g_my_managed_buffer, tensor);
     }
+
+    //
+
+
     GGML_ASSERT(tensor->buffer == NULL);
     GGML_ASSERT(tensor->data == NULL);
     GGML_ASSERT(tensor->view_src == NULL);

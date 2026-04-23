@@ -1,6 +1,8 @@
 #ifndef CUSTOM_LAYER_BRIDGE_H
 #define CUSTOM_LAYER_BRIDGE_H
 
+#include "ggml-backend.h"
+#include "ggml-alloc.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -37,6 +39,7 @@ extern "C" {
     extern FILE * g_model_file;           // GGUF 文件句柄
     extern void * g_layer_buffer;         // 你的缓冲区指针
     extern size_t g_layer_buffer_size;    // 缓冲区大小
+    extern ggml_backend_buffer_t g_my_managed_buffer;
 
     // 3. 声明函数原型
     void load_layer_from_disk(int target_layer);
