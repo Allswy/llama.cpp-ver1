@@ -30,7 +30,7 @@
 #include <sys/sysctl.h>
 #endif
 
-g_my_managed_buffer = nullptr;
+ggml_backend_buffer_t g_my_managed_buffer = nullptr;
 
 
 // backend buffer type
