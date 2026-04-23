@@ -52,11 +52,11 @@
 #include "llamafile/sgemm.h"
 #endif
 
-struct LayerDiskInfo g_my_layer_table[MAX_LAYERS];
-void* g_layer_buffer = NULL;             // 指向Buffer头部
-size_t g_layer_buffer_size = 0;              // Buffer 的容量
-FILE* g_model_file = NULL;               // 模型文件
-int g_current_loaded_layer = -999;        // 标记当前内存里是哪一层
+// struct LayerDiskInfo g_my_layer_table[MAX_LAYERS];
+// void* g_layer_buffer = NULL;             // 指向Buffer头部
+// size_t g_layer_buffer_size = 0;              // Buffer 的容量
+// FILE* g_model_file = NULL;               // 模型文件
+// int g_current_loaded_layer = -999;        // 标记当前内存里是哪一层
 
 
 
