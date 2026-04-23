@@ -30,7 +30,7 @@
 #include <sys/sysctl.h>
 #endif
 
-ggml_backend_buffer_t g_my_managed_buffer = nullptr;
+//ggml_backend_buffer_t g_my_managed_buffer = nullptr;
 
 struct LayerDiskInfo g_my_layer_table[MAX_LAYERS];
 void* g_layer_buffer = NULL;             // 指向Buffer头部

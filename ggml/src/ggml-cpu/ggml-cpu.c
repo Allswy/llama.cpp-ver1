@@ -3092,6 +3092,8 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             }
         }
 
+        printf("calculating layer %d\n", target_layer);
+
         // 单线程存取
         if (state->ith == 0) {
             extern int g_current_loaded_layer;

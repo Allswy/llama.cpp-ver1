@@ -25,7 +25,7 @@ void init_layer_buffer() {
 
     for (int i = 0; i < MAX_LAYERS; i++) {
         //fprintf(stderr, "Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
-        printf("Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
+        //printf("Layer %d: total_bytes_needed = %" PRIu64 " bytes\n", i, g_my_layer_table[i].total_bytes_needed);
         if (g_my_layer_table[i].total_bytes_needed > max_layer_bytes) {
             max_layer_bytes = g_my_layer_table[i].total_bytes_needed;
         }
