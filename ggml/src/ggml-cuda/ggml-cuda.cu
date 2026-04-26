@@ -62,6 +62,7 @@
 #include "ggml-cuda/cumsum.cuh"
 #include "ggml-cuda/fill.cuh"
 #include "ggml.h"
+#include "custom_layer_bridge.h"
 
 #include <algorithm>
 #include <array>
@@ -2484,6 +2485,78 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
         nb1, nb2, nb3, stream);
 }
+
+
+// 按需读取文件到Buffer
+void load_layer_from_disk(int target_layer) {
+    //printf("Loading layer %d from disk...\n", target_layer);
+    if (target_layer < 0 || target_layer >= MAX_LAYERS) return;
+    if (!g_my_layer_table[target_layer].is_initialized) return;
+
+    struct LayerDiskInfo * info = &g_my_layer_table[target_layer];
+
+    size_t current_buffer_offset = 0;
+
+    if (g_model_file == NULL) {
+        fprintf(stderr, "Error: g_model_file is nullptr\n");
+        return; 
+    }
+
+    #if !defined(_WIN32)
+    int fd = fileno(g_model_file);
+    #endif
+    if (g_model_file == NULL) {
+        printf("nullptr\n");
+        //g_model_file = fopen(fname.c_str(), "rb");
+    }
+    //printf("tensor_count = %d, total_bytes_needed = %" PRIu64 " bytes\n", info->tensor_count, info->total_bytes_needed);
+
+
+
+    // 检查基地址是否已经按 256 字节对齐
+    if ((uintptr_t)g_layer_buffer % GGML_MEM_ALIGN != 0) {
+        fprintf(stderr, "Fatal: g_layer_buffer base address is not aligned to %d bytes!\n", GGML_MEM_ALIGN);
+        // 如果这里报错，去修改 g_layer_buffer 的 malloc 代码
+        exit(1); 
+    }
+
+
+
+    //加锁
+    // cudaError_t sync_err = cudaDeviceSynchronize();
+    // if (sync_err != cudaSuccess) {
+    //     fprintf(stderr, "CUDA Sync Error before pread: %s\n", cudaGetErrorString(sync_err));
+    //     exit(1);
+    // }
+    
+    for (int i = 0; i < info->tensor_count; i++) {
+        struct TensorLocation * loc = &info->tensors[i];
+
+        current_buffer_offset = (current_buffer_offset + 255) & ~255;
+
+        if (current_buffer_offset + loc->n_bytes > g_layer_buffer_size) {
+            fprintf(stderr, "Fatal: Layer Buffer Overflow at layer %d, tensor %d!\n", target_layer, i);
+            exit(1);
+        }
+
+        void* target_memory_addr = (char*)g_layer_buffer + current_buffer_offset;
+        #if defined(_WIN32)
+            _fseeki64(g_model_file, loc->absolute_file_offset, SEEK_SET);
+            fread(target_memory_addr, 1, loc->n_bytes, g_model_file);
+        #else
+            pread(fd, target_memory_addr, loc->n_bytes, loc->absolute_file_offset);
+        #endif
+
+
+        //loc->tensor->data = target_memory_addr;
+        loc->cached_pool_addr = target_memory_addr;
+        current_buffer_offset += loc->n_bytes;
+    }
+
+    g_current_loaded_layer = target_layer;
+    //printf("Layer %d loaded into memory. Total bytes: %zu\n", target_layer, current_buffer_offset);
+}
+
 
 static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
 
