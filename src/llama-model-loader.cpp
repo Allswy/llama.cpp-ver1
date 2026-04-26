@@ -14,8 +14,8 @@
 #include <future>
 #include <regex>
 #include <cstdlib>
-#include <cuda_runtime.h>
 
+extern "C" void* my_cuda_malloc_managed(size_t size);
 
 void init_layer_buffer() {
     if (g_layer_buffer != nullptr) {
@@ -38,16 +38,17 @@ void init_layer_buffer() {
     // g_layer_buffer = malloc(g_layer_buffer_size);
 
     // --- 修改部分开始：使用 CUDA Unified Memory ---
-    cudaError_t err = cudaMallocManaged(&g_layer_buffer, g_layer_buffer_size);
+    //cudaError_t err = cudaMallocManaged(&g_layer_buffer, g_layer_buffer_size);
     
-    if (err != cudaSuccess) {
-        fprintf(stderr, "Fatal Error: cudaMallocManaged failed to allocate %zu bytes! Error: %s\n", 
-                g_layer_buffer_size, cudaGetErrorString(err));
-        exit(1);
-    }
+    // if (err != cudaSuccess) {
+    //     fprintf(stderr, "Fatal Error: cudaMallocManaged failed to allocate %zu bytes! Error: %s\n", 
+    //             g_layer_buffer_size, cudaGetErrorString(err));
+    //     exit(1);
+    // }
     // --- 修改部分结束 ---
 
     //g_my_managed_buffer = ggml_backend_cpu_buffer_from_ptr(g_layer_buffer, g_layer_buffer_size);
+    g_layer_buffer = my_cuda_malloc_managed(g_layer_buffer_size);
 
     if (!g_layer_buffer) {
         fprintf(stderr, "Fatal Error: Failed to pre-allocate static layer buffer of size %zu!\n", g_layer_buffer_size);

@@ -89,6 +89,22 @@
 
 #undef USE_CUDA_GRAPH
 
+extern "C" {
+
+void* my_cuda_malloc_managed(size_t size) {
+    void* ptr = nullptr;
+    // 这里是 .cu 文件，nvcc 原生支持 CUDA API，完全不需要操心头文件
+    cudaError_t err = cudaMallocManaged(&ptr, size);
+    
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Fatal Error: cudaMallocManaged failed! Error: %s\n", cudaGetErrorString(err));
+        return nullptr;
+    }
+    return ptr;
+}
+
+} // extern "C"
+
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
 [[noreturn]]
