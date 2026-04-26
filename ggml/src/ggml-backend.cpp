@@ -2009,6 +2009,7 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
         
         if (tensor->data == NULL) {
             int target_layer = parse_layer_id_from_name(tensor->name);
+            printf("now layer = %d:\n", target_layer);
             void* exact_tensor_addr = NULL;
 
             // 如果是我们关心的层，通过查表获取它在 UMA Buffer 里的精确偏移地址
