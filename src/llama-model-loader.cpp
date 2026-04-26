@@ -33,7 +33,7 @@ void init_layer_buffer() {
     //max_layer_bytes = 661225472;
     //printf("max_layer_bytes = %d", max_layer_bytes);
 
-    g_layer_buffer_size = (size_t)(max_layer_bytes * 1.05);
+    g_layer_buffer_size = (size_t)(max_layer_bytes * 2);
 
     // g_layer_buffer = malloc(g_layer_buffer_size);
 
