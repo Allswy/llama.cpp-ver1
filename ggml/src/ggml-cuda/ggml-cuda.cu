@@ -84,6 +84,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unistd.h>
 
 
 #undef USE_CUDA_GRAPH
@@ -2597,7 +2598,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         // 因为 CUDA 的计算是异步推送到流(Stream)中的。
         // 调用 cudaStreamSynchronize 确保 GPU 已经彻底算完了上一层的所有算子。
         cudaStreamSynchronize(cudaStreamPerThread); 
-        // （如果求稳，也可以直接使用全局级的 cudaDeviceSynchronize();）
+        // （如果求稳，也可以直接使用全局级的 cudaDeviceSynchronize();）    w
 
         // 现在 GPU 绝对空闲且已经算完上一层，内存安全，可以覆盖数据
         load_layer_from_disk(target_layer);
