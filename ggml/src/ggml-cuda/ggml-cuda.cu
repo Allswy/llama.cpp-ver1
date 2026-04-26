@@ -2567,7 +2567,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
     int target_layer = -999;
     
     for (int i = 0; i < GGML_MAX_SRC; i++) {
-        if (dst->src[i] != nullptr && dst->src[i]->name != '\0') {
+        if (dst->src[i] != nullptr && dst->src[i]->name[0] != '\0') {
             const char* t_name = dst->src[i]->name;
 
             if (strncmp(t_name, "blk.", 4) == 0) {
