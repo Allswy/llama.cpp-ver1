@@ -2483,6 +2483,56 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 }
 
 static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
+
+    // ===================================================================
+    // 【1. 按需加载拦截：解析当前算子属于哪一层】
+    // ===================================================================
+    int target_layer = -999;
+    
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        if (dst->src[i] != nullptr && dst->src[i]->name != '\0') {
+            const char* t_name = dst->src[i]->name;
+
+            if (strncmp(t_name, "blk.", 4) == 0) {
+                target_layer = atoi(t_name + 4);
+                break;
+            } else if (strcmp(t_name, "token_embd.weight") == 0) {
+                target_layer = 998;
+                break;
+            } else if (strcmp(t_name, "output.weight") == 0) {
+                target_layer = 999;
+                break;
+            } else if (strcmp(t_name, "output_norm.weight") == 0) {
+                target_layer = 1000;
+                break;
+            }
+        }
+    }
+
+    // ===================================================================
+    // 【2. 时间复用：换层时的 GPU 同步与换页 Load】
+    // ===================================================================
+    extern int g_current_loaded_layer;
+
+    if (target_layer != -999 && target_layer != g_current_loaded_layer) {
+        
+        // 【极其关键：时间隔离】
+        // 在 CPU 往 g_layer_buffer 写入新的一层数据之前，必须让 GPU 停下来。
+        // 因为 CUDA 的计算是异步推送到流(Stream)中的。
+        // 调用 cudaStreamSynchronize 确保 GPU 已经彻底算完了上一层的所有算子。
+        cudaStreamSynchronize(cudaStreamPerThread); 
+        // （如果求稳，也可以直接使用全局级的 cudaDeviceSynchronize();）
+
+        // 现在 GPU 绝对空闲且已经算完上一层，内存安全，可以覆盖数据
+        load_layer_from_disk(target_layer);
+        
+        // 更新标记
+        g_current_loaded_layer = target_layer;
+    }
+
+    // ===================================================================
+    // 以下保留 llama.cpp 原本的 ggml_cuda_compute_forward 逻辑
+    // ===================================================================
     // why is this here instead of mul_mat?
     if (dst->src[0] != nullptr && ggml_backend_buft_is_cuda_split(dst->src[0]->buffer->buft)) {
         ggml_cuda_set_peer_access(dst->src[1]->ne[1], ctx.device);

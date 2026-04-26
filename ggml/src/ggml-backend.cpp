@@ -1908,59 +1908,136 @@ enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor) {
 
 
 
-enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
-    // GGML_ASSERT(tensor);
-    // //拦截模型权重，不再进行检查
-    // if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
+// enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+//     // GGML_ASSERT(tensor);
+//     // //拦截模型权重，不再进行检查
+//     // if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
 
-    //     // 保证指针非空
-    //     if (tensor->data == NULL) {
-    //         tensor->data = (void*)1;
-    //     }
+//     //     // 保证指针非空
+//     //     if (tensor->data == NULL) {
+//     //         tensor->data = (void*)1;
+//     //     }
 
-    //     return GGML_STATUS_SUCCESS;
-    // }
+//     //     return GGML_STATUS_SUCCESS;
+//     // }
 
 
 
-    //
+//     //
 
-    GGML_ASSERT(tensor);
+//     GGML_ASSERT(tensor);
     
-    // // 拦截模型权重
-    // if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
+//     // // 拦截模型权重
+//     // if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, "blk.") != NULL)) {
 
-    //     // 绝不要用 (void*)1，给它一个绝对安全的起始地址！
-    //     if (tensor->data == NULL) {
-    //         // 直接指向你的 unified memory 基地址，反正你在 load_layer_from_disk 时会真正覆盖它
-    //         tensor->data = g_layer_buffer; 
-    //     }
+//     //     // 绝不要用 (void*)1，给它一个绝对安全的起始地址！
+//     //     if (tensor->data == NULL) {
+//     //         // 直接指向你的 unified memory 基地址，反正你在 load_layer_from_disk 时会真正覆盖它
+//     //         tensor->data = g_layer_buffer; 
+//     //     }
 
-    //     // 【关键修复】：把它绑定到你刚才创建的合法 Buffer 上！不要让它变成孤儿！
-    //     tensor->buffer = g_my_managed_buffer;
+//     //     // 【关键修复】：把它绑定到你刚才创建的合法 Buffer 上！不要让它变成孤儿！
+//     //     tensor->buffer = g_my_managed_buffer;
         
-    //     // 注册它，让后端知道它的存在
-    //     return ggml_backend_buffer_init_tensor(g_my_managed_buffer, tensor);
-    // }
+//     //     // 注册它，让后端知道它的存在
+//     //     return ggml_backend_buffer_init_tensor(g_my_managed_buffer, tensor);
+//     // }
 
-    // //
+//     // //
 
-    // 【关键修复 1】：删掉 "blk."，只拦截真正的模型权重！
-    // 增加 ".bias" 以防漏掉偏置项
+//     // 【关键修复 1】：删掉 "blk."，只拦截真正的模型权重！
+//     // 增加 ".bias" 以防漏掉偏置项
+//     if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, ".bias") != NULL)) {
+
+//         // 【关键修复 2】：如果加载阶段 g_layer_buffer 还没就绪，给个安全的占位符对齐地址
+//         if (tensor->data == NULL) {
+//             tensor->data = (g_layer_buffer != NULL) ? g_layer_buffer : (void*)256; 
+//         }
+
+//         // 【关键修复 3】：绝不使用我们自定义的 buffer，直接沿用系统传进来的合法 buffer！
+//         tensor->buffer = buffer;
+        
+//         // 让后端用合法的 buffer 注册这个 tensor
+//         return ggml_backend_buffer_init_tensor(buffer, tensor);
+//     }
+
+
+//     GGML_ASSERT(tensor->buffer == NULL);
+//     GGML_ASSERT(tensor->data == NULL);
+//     GGML_ASSERT(tensor->view_src == NULL);
+//     GGML_ASSERT(addr >= ggml_backend_buffer_get_base(buffer));
+//     GGML_ASSERT((char *)addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
+//                 (char *)ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
+
+//     tensor->buffer = buffer;
+//     tensor->data = addr;
+//     return ggml_backend_buffer_init_tensor(buffer, tensor);
+// }
+
+
+void* get_tensor_memory_by_name(int target_layer, const char* tensor_name) {
+    struct LayerDiskInfo * info = &g_my_layer_table[target_layer];
+    for (int i = 0; i < info->tensor_count; i++) {
+        if (strcmp(info->tensors[i].name, tensor_name) == 0) {
+            return info->tensors[i].cached_pool_addr;
+        }
+    }
+    return NULL;
+}
+
+static int parse_layer_id_from_name(const char* t_name) {
+    if (strncmp(t_name, "blk.", 4) == 0) {
+        return atoi(t_name + 4);
+    } else if (strcmp(t_name, "token_embd.weight") == 0) {
+        return 998;
+    } else if (strcmp(t_name, "output.weight") == 0) {
+        return 999;
+    } else if (strcmp(t_name, "output_norm.weight") == 0) {
+        return 1000;
+    }
+    return -999;
+}
+
+enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    GGML_ASSERT(tensor);
+
+    // ===================================================================
+    // 【1. 拦截按需加载的模型权重张量】
+    // 只拦截权重和偏置，绝对不能拦截普通的计算节点（如 KV cache 或 softmax 输出）
+    // ===================================================================
     if (tensor->name != NULL && (strstr(tensor->name, ".weight") != NULL || strstr(tensor->name, ".bias") != NULL)) {
-
-        // 【关键修复 2】：如果加载阶段 g_layer_buffer 还没就绪，给个安全的占位符对齐地址
+        
         if (tensor->data == NULL) {
-            tensor->data = (g_layer_buffer != NULL) ? g_layer_buffer : (void*)256; 
+            int target_layer = parse_layer_id_from_name(tensor->name);
+            void* exact_tensor_addr = NULL;
+
+            // 如果是我们关心的层，通过查表获取它在 UMA Buffer 里的精确偏移地址
+            if (target_layer != -999) {
+                exact_tensor_addr = get_tensor_memory_by_name(target_layer, tensor->name); // [1]
+            }
+
+            if (exact_tensor_addr != NULL) {
+                // 【核心修复】：赋上带有正确 Offset 的共享物理内存地址
+                tensor->data = exact_tensor_addr; 
+            } else {
+                // Fallback：如果没在表里找到（比如是不需要按需加载的额外小权重）
+                // 暂时给一个占位地址。实际项目中，你也可以让它跳过拦截走原有的 addr 逻辑。
+                extern void* g_layer_buffer;
+                tensor->data = (g_layer_buffer != NULL) ? g_layer_buffer : (void*)256;
+            }
         }
 
-        // 【关键修复 3】：绝不使用我们自定义的 buffer，直接沿用系统传进来的合法 buffer！
+        // 绝不使用我们自定义的孤儿 buffer，直接沿用系统传进来的合法 backend buffer
         tensor->buffer = buffer;
         
-        // 让后端用合法的 buffer 注册这个 tensor
+        // 让后端用合法的 buffer 注册这个 tensor，CUDA/CPU Backend 都能正常追踪到它
         return ggml_backend_buffer_init_tensor(buffer, tensor);
     }
 
+    // ===================================================================
+    // 【2. 原有的分配逻辑】（保持不动）
+    // 用于分配中间激活值、KV Cache 等运行时动态生成的非复用 Tensor
+    // ===================================================================
 
     GGML_ASSERT(tensor->buffer == NULL);
     GGML_ASSERT(tensor->data == NULL);
@@ -1973,6 +2050,7 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
     tensor->data = addr;
     return ggml_backend_buffer_init_tensor(buffer, tensor);
 }
+
 
 static struct ggml_tensor * graph_copy_dup_tensor(struct ggml_hash_set hash_set, struct ggml_tensor ** node_copies,
     struct ggml_context * ctx_allocated, struct ggml_context * ctx_unallocated, struct ggml_tensor * src) {

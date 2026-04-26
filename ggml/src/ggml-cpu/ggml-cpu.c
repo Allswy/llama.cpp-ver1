@@ -94,6 +94,14 @@ void load_layer_from_disk(int target_layer) {
         exit(1); 
     }
 
+
+
+    //加锁
+    cudaError_t sync_err = cudaDeviceSynchronize();
+    if (sync_err != cudaSuccess) {
+        fprintf(stderr, "CUDA Sync Error before pread: %s\n", cudaGetErrorString(sync_err));
+        exit(1);
+    }
     
     for (int i = 0; i < info->tensor_count; i++) {
         struct TensorLocation * loc = &info->tensors[i];
@@ -3092,7 +3100,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             }
         }
 
-        printf("calculating layer %d\n", target_layer);
+        //printf("calculating layer %d\n", target_layer);
 
         // 单线程存取
         if (state->ith == 0) {
