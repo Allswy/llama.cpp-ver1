@@ -97,11 +97,11 @@ void load_layer_from_disk(int target_layer) {
 
 
     //加锁
-    cudaError_t sync_err = cudaDeviceSynchronize();
-    if (sync_err != cudaSuccess) {
-        fprintf(stderr, "CUDA Sync Error before pread: %s\n", cudaGetErrorString(sync_err));
-        exit(1);
-    }
+    // cudaError_t sync_err = cudaDeviceSynchronize();
+    // if (sync_err != cudaSuccess) {
+    //     fprintf(stderr, "CUDA Sync Error before pread: %s\n", cudaGetErrorString(sync_err));
+    //     exit(1);
+    // }
     
     for (int i = 0; i < info->tensor_count; i++) {
         struct TensorLocation * loc = &info->tensors[i];
