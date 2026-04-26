@@ -84,6 +84,9 @@
 #include <vector>
 #include <unordered_set>
 
+
+#undef USE_CUDA_GRAPH
+
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
 [[noreturn]]
